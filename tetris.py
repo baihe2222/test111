@@ -20,6 +20,13 @@ CELL_SIZE = 30
 GRID_X_OFFSET = 50
 GRID_Y_OFFSET = 50
 
+# 游戏设置
+FPS = 60
+INITIAL_FALL_SPEED = 500
+MIN_FALL_SPEED = 50
+SPEED_INCREASE_PER_LEVEL = 50
+LINES_PER_LEVEL = 10
+
 # 窗口尺寸
 WINDOW_WIDTH = GRID_WIDTH * CELL_SIZE + 2 * GRID_X_OFFSET + 200
 WINDOW_HEIGHT = GRID_HEIGHT * CELL_SIZE + 2 * GRID_Y_OFFSET
@@ -164,6 +171,9 @@ class TetrisPiece:
     """俄罗斯方块单个方块类"""
     
     def __init__(self, x: int, y: int, shape_index: int):
+        if not (0 <= shape_index < len(TETRIS_SHAPES)):
+            raise ValueError(f"Invalid shape_index: {shape_index}")
+        
         self.x = x
         self.y = y
         self.shape_index = shape_index
@@ -214,10 +224,25 @@ class TetrisGame:
         self.level = 1
         self.lines_cleared = 0
         self.fall_time = 0
-        self.fall_speed = 500  # 毫秒
+        self.fall_speed = INITIAL_FALL_SPEED
         self.game_over = False
+        self.paused = False
         
         # 生成第一个方块
+        self.spawn_new_piece()
+    
+    def restart_game(self):
+        """重新开始游戏"""
+        self.grid = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+        self.current_piece = None
+        self.next_piece = None
+        self.score = 0
+        self.level = 1
+        self.lines_cleared = 0
+        self.fall_time = 0
+        self.fall_speed = INITIAL_FALL_SPEED
+        self.game_over = False
+        self.paused = False
         self.spawn_new_piece()
         
     def spawn_new_piece(self):
@@ -269,8 +294,8 @@ class TetrisGame:
             self.lines_cleared += lines_cleared
             
             # 升级：每10行升一级
-            self.level = self.lines_cleared // 10 + 1
-            self.fall_speed = max(50, 500 - (self.level - 1) * 50)
+            self.level = self.lines_cleared // LINES_PER_LEVEL + 1
+            self.fall_speed = max(MIN_FALL_SPEED, INITIAL_FALL_SPEED - (self.level - 1) * SPEED_INCREASE_PER_LEVEL)
         
         return lines_cleared
     
@@ -283,7 +308,14 @@ class TetrisGame:
             if event.type == pygame.KEYDOWN:
                 if self.game_over:
                     if event.key == pygame.K_r:
-                        self.__init__()  # 重新开始游戏
+                        self.restart_game()  # 重新开始游戏
+                    continue
+                
+                if event.key == pygame.K_p:
+                    self.paused = not self.paused
+                    continue
+                
+                if self.paused:
                     continue
                 
                 if event.key == pygame.K_LEFT:
@@ -321,7 +353,7 @@ class TetrisGame:
     
     def update(self, dt: int):
         """更新游戏状态"""
-        if self.game_over:
+        if self.game_over or self.paused:
             return
         
         self.fall_time += dt
@@ -350,17 +382,21 @@ class TetrisGame:
                            (GRID_X_OFFSET + x * CELL_SIZE, GRID_Y_OFFSET),
                            (GRID_X_OFFSET + x * CELL_SIZE, GRID_Y_OFFSET + GRID_HEIGHT * CELL_SIZE))
     
+    def draw_cell(self, x: int, y: int, color: Tuple[int, int, int]):
+        """绘制单个格子"""
+        rect = pygame.Rect(
+            GRID_X_OFFSET + x * CELL_SIZE + 1,
+            GRID_Y_OFFSET + y * CELL_SIZE + 1,
+            CELL_SIZE - 2,
+            CELL_SIZE - 2
+        )
+        pygame.draw.rect(self.screen, color, rect)
+    
     def draw_piece(self, piece: TetrisPiece):
         """绘制方块"""
         for x, y in piece.get_cells():
             if 0 <= x < GRID_WIDTH and y >= 0:
-                rect = pygame.Rect(
-                    GRID_X_OFFSET + x * CELL_SIZE + 1,
-                    GRID_Y_OFFSET + y * CELL_SIZE + 1,
-                    CELL_SIZE - 2,
-                    CELL_SIZE - 2
-                )
-                pygame.draw.rect(self.screen, piece.color, rect)
+                self.draw_cell(x, y, piece.color)
     
     def draw_placed_pieces(self):
         """绘制已放置的方块"""
@@ -368,13 +404,7 @@ class TetrisGame:
             for x in range(GRID_WIDTH):
                 if self.grid[y][x] != 0:
                     color = PIECE_COLORS[self.grid[y][x] - 1]
-                    rect = pygame.Rect(
-                        GRID_X_OFFSET + x * CELL_SIZE + 1,
-                        GRID_Y_OFFSET + y * CELL_SIZE + 1,
-                        CELL_SIZE - 2,
-                        CELL_SIZE - 2
-                    )
-                    pygame.draw.rect(self.screen, color, rect)
+                    self.draw_cell(x, y, color)
     
     def draw_next_piece(self):
         """绘制下一个方块预览"""
@@ -418,7 +448,8 @@ class TetrisGame:
             "←→: 左右移动",
             "↓: 加速下降",
             "↑: 旋转",
-            "空格: 硬降"
+            "空格: 硬降",
+            "P: 暂停/继续"
         ]
         
         for i, text in enumerate(controls):
@@ -445,6 +476,21 @@ class TetrisGame:
         restart_rect = restart_text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 50))
         self.screen.blit(restart_text, restart_rect)
     
+    def draw_pause_screen(self):
+        """绘制暂停画面"""
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+        overlay.set_alpha(128)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, 0))
+        
+        pause_text = pygame.font.Font(None, 72).render("游戏暂停", True, YELLOW)
+        text_rect = pause_text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
+        self.screen.blit(pause_text, text_rect)
+        
+        continue_text = self.font.render("按 P 键继续游戏", True, WHITE)
+        continue_rect = continue_text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 50))
+        self.screen.blit(continue_text, continue_rect)
+    
     def draw(self):
         """绘制游戏画面"""
         self.screen.fill(BLACK)
@@ -463,6 +509,8 @@ class TetrisGame:
         # 绘制游戏结束画面
         if self.game_over:
             self.draw_game_over()
+        elif self.paused:
+            self.draw_pause_screen()
         
         pygame.display.flip()
     
@@ -470,7 +518,7 @@ class TetrisGame:
         """运行游戏主循环"""
         running = True
         while running:
-            dt = self.clock.tick(60)
+            dt = self.clock.tick(FPS)
             
             running = self.handle_input()
             self.update(dt)
